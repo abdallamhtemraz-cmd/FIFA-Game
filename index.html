@@ -509,8 +509,18 @@
   .top-online .mini{font-size:12px;padding:7px 10px;width:auto}
   .invite-count{color:var(--gold);font-weight:900}
 
+  .auth-screen{position:relative;overflow:hidden;background:radial-gradient(circle at 50% 20%,rgba(48,100,255,.16),transparent 35%),linear-gradient(145deg,#030817,#071534 55%,#020711)}
+  .auth-card-premium{position:relative;z-index:2;max-width:430px;padding:34px 30px 24px;border:1px solid rgba(130,170,255,.22);background:linear-gradient(180deg,rgba(10,24,58,.94),rgba(4,12,30,.96));box-shadow:0 30px 90px rgba(0,0,0,.58),0 0 50px rgba(43,104,255,.10)}
+  .auth-glow{position:absolute;border-radius:50%;filter:blur(50px);pointer-events:none}.auth-glow-one{width:260px;height:260px;background:rgba(45,103,255,.16);top:-80px;left:-80px}.auth-glow-two{width:220px;height:220px;background:rgba(255,190,50,.09);bottom:-80px;right:-60px}
+  .auth-logo-wrap{position:relative;width:82px;height:82px;margin:0 auto 13px}.auth-logo{width:82px;height:82px;display:grid;place-items:center;border-radius:25px;background:linear-gradient(145deg,#172e67,#081532);border:1px solid rgba(255,255,255,.12);font-size:40px;box-shadow:0 12px 35px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.12)}
+  .auth-online-dot{position:absolute;width:12px;height:12px;border-radius:50%;right:3px;bottom:4px;background:#42e77b;border:3px solid #07142f;box-shadow:0 0 14px rgba(66,231,123,.8)}
+  .auth-kicker{text-align:center;color:var(--gold);font-size:11px;font-weight:900;letter-spacing:3px;margin-bottom:5px}.auth-card-premium h2{font-size:31px;margin:0 0 7px}.auth-subtitle{max-width:330px;margin:0 auto 22px!important;line-height:1.7}
+  .auth-field{margin-bottom:14px}.auth-field label{display:block;margin:0 0 7px;font-size:13px;font-weight:800;color:#dbe6ff}.auth-input-wrap{display:flex;align-items:center;gap:9px;height:52px;padding:0 13px;border:1px solid rgba(150,180,255,.18);border-radius:14px;background:rgba(255,255,255,.045);transition:.2s}.auth-input-wrap:focus-within{border-color:rgba(255,201,66,.7);box-shadow:0 0 0 3px rgba(255,201,66,.08)}.auth-input-wrap>span{font-size:17px;opacity:.8}.auth-input-wrap input{flex:1;width:100%;height:100%;padding:0;border:0!important;background:transparent!important;box-shadow:none!important;outline:none;color:#fff;font-size:14px}.auth-input-wrap input::placeholder{color:#7383a8}.password-toggle{border:0;background:transparent;color:var(--gold);font-size:11px;font-weight:800;cursor:pointer}.auth-login-btn{height:52px;margin-top:7px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:16px}.auth-login-btn:disabled{opacity:.65;cursor:wait}.auth-divider{display:flex;align-items:center;gap:9px;margin:20px 0 13px;color:#7282a7;font-size:10px}.auth-divider:before,.auth-divider:after{content:'';height:1px;flex:1;background:rgba(150,180,255,.12)}.auth-local-btn{height:45px;font-size:13px}.auth-footer{display:flex;justify-content:center;gap:8px;margin-top:17px;color:#68799f;font-size:10px}.auth-footer span:first-child{color:#7eeaa1}
+  @media(max-width:480px){.auth-screen{padding:14px}.auth-card-premium{padding:28px 18px 20px}.auth-card-premium h2{font-size:27px}}
+
 </style>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
 /* =========================================================
    ONLINE SYSTEM - Supabase
    IMPORTANT: put only your Supabase project URL + publishable/anon key here.
@@ -544,7 +554,8 @@ function clearAuthError(){ const a=$('auth-error'); if(a)a.style.display='none';
 async function initOnlineSystem(){
   if(!supabaseReady()) return;
   sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  const {data:{session}} = await sb.auth.getSession();
+  const {data:{session},error:sessionError} = await sb.auth.getSession();
+  if(sessionError) console.error(sessionError);
   if(session) await loadOnlineProfile(session.user.id);
   sb.auth.onAuthStateChange(async (_event, session)=>{
     if(session) await loadOnlineProfile(session.user.id);
@@ -567,24 +578,43 @@ async function loginPlayer(){
       email: username + PLAYER_EMAIL_DOMAIN,
       password
     });
-    if(error) throw error;
-    await loadOnlineProfile(data.user.id);
-    showOnlineLobby();
+    if(error){
+      console.error('Supabase login error:', error);
+      const msg = String(error.message || '').toLowerCase();
+      if(msg.includes('email not confirmed')) {
+        authError('الحساب لم يتم تأكيده. من Supabase افتح Authentication > Users وتأكد أن Confirmed ظاهر للحساب.');
+      } else if(msg.includes('invalid login credentials')) {
+        authError('اسم المستخدم أو كلمة المرور غلط. تأكد أن اسم المستخدم هو نفس الجزء قبل @player.local.');
+      } else if(msg.includes('failed to fetch') || msg.includes('network')) {
+        authError('الموقع مش قادر يتصل بـ Supabase. راجع Project URL والـ Publishable key داخل الكود.');
+      } else {
+        authError('حصل خطأ في تسجيل الدخول: ' + (error.message || 'Unknown error'));
+      }
+      return;
+    }
+    const ok = await loadOnlineProfile(data.user.id);
+    if(ok) showOnlineLobby();
   }catch(e){
-    authError('بيانات الدخول غير صحيحة أو الحساب غير موجود.');
+    console.error(e);
+    authError('حصل خطأ غير متوقع أثناء تسجيل الدخول. افتح Console لو محتاج تفاصيل.');
   }finally{$('login-btn').disabled=false;}
 }
 
 async function loadOnlineProfile(userId){
-  if(!sb) return;
+  if(!sb) return false;
   const {data,error}=await sb.from('players').select('id,user_id,username,points,wins').eq('user_id',userId).single();
-  if(error){ console.error(error); return; }
+  if(error || !data){
+    console.error('players profile error:', error);
+    authError('تم تسجيل الدخول في Supabase لكن حساب اللاعب غير موجود في جدول players. شغّل ملف supabase_setup.sql وتأكد أن الحساب اتعمل من Authentication > Users.');
+    return false;
+  }
   onlineUser={id:userId};
   onlineProfile=data;
   $('online-username').innerText=data.username;
   $('online-points').innerText=data.points;
   await loadInvites();
   subscribeToInvites();
+  return true;
 }
 
 function showScreen(id){
@@ -768,6 +798,18 @@ async function logoutPlayer(){
   showScreen('screen-auth');
 }
 
+
+function toggleLoginPassword(){
+  const input=$('login-password');
+  const btn=document.querySelector('.password-toggle');
+  if(!input)return;
+  const showing=input.type==='text';
+  input.type=showing?'password':'text';
+  if(btn)btn.innerText=showing?'إظهار':'إخفاء';
+}
+$('login-password')?.addEventListener('keydown',e=>{if(e.key==='Enter')loginPlayer();});
+$('login-username')?.addEventListener('keydown',e=>{if(e.key==='Enter')$('login-password')?.focus();});
+
 /* استدعاء مرة واحدة بعد تحميل الصفحة */
 setTimeout(initOnlineSystem,50);
 
@@ -817,17 +859,25 @@ async function awardOnlineWinPoints(){ /* legacy hook kept for compatibility */ 
   <!-- AUTH: أول شاشة تظهر للمستخدم -->
   <section class="screen active" id="screen-auth">
     <div class="auth-screen">
-      <div class="auth-card">
-        <div class="landing-ball">⚽</div>
+      <div class="auth-glow auth-glow-one"></div><div class="auth-glow auth-glow-two"></div>
+      <div class="auth-card auth-card-premium">
+        <div class="auth-logo-wrap"><div class="auth-logo">⚽</div><div class="auth-online-dot"></div></div>
+        <div class="auth-kicker">FOOTBALL ONLINE</div>
         <h2>تسجيل الدخول</h2>
-        <p>ادخل بحساب اللاعب الذي أنشأه الأدمن.</p>
+        <p class="auth-subtitle">ادخل بحساب اللاعب الخاص بيك وابدأ اللعب أونلاين.</p>
         <div class="auth-error" id="auth-error"></div>
-        <label>اسم المستخدم</label>
-        <input type="text" id="login-username" autocomplete="username" placeholder="Username">
-        <label>كلمة المرور</label>
-        <input type="password" id="login-password" autocomplete="current-password" placeholder="Password">
-        <button class="btn btn-primary" id="login-btn" onclick="loginPlayer()">دخول</button>
-        <button class="btn btn-secondary" onclick="showGuestLanding()">تجربة محلية بدون حساب</button>
+        <div class="auth-field">
+          <label for="login-username">اسم المستخدم</label>
+          <div class="auth-input-wrap"><span>👤</span><input type="text" id="login-username" autocomplete="username" placeholder="اكتب اسم المستخدم" spellcheck="false"></div>
+        </div>
+        <div class="auth-field">
+          <label for="login-password">كلمة المرور</label>
+          <div class="auth-input-wrap"><span>🔒</span><input type="password" id="login-password" autocomplete="current-password" placeholder="اكتب كلمة المرور"><button type="button" class="password-toggle" onclick="toggleLoginPassword()">إظهار</button></div>
+        </div>
+        <button class="btn btn-primary auth-login-btn" id="login-btn" onclick="loginPlayer()"><span>دخول للحساب</span><span>→</span></button>
+        <div class="auth-divider"><span>حسابات اللاعبين ينشئها الأدمن فقط</span></div>
+        <button class="btn btn-secondary auth-local-btn" onclick="showGuestLanding()">تجربة اللعبة محليًا</button>
+        <div class="auth-footer"><span>🔐 اتصال آمن</span><span>•</span><span>Online Match</span></div>
       </div>
     </div>
   </section>
