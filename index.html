@@ -543,16 +543,20 @@ function supabaseReady(){
          !SUPABASE_ANON_KEY.includes("PASTE_");
 }
 function onlineError(msg){
-  const a=$('online-error'); if(a){a.innerText=msg;a.style.display='block';}
+  const a=document.getElementById('online-error'); if(a){a.innerText=msg;a.style.display='block';}
   showToast(msg);
 }
 function authError(msg){
-  const a=$('auth-error'); if(a){a.innerText=msg;a.style.display='block';}
+  const a=document.getElementById('auth-error'); if(a){a.innerText=msg;a.style.display='block';}
 }
-function clearAuthError(){ const a=$('auth-error'); if(a)a.style.display='none'; }
+function clearAuthError(){ const a=document.getElementById('auth-error'); if(a)a.style.display='none'; }
 
 async function initOnlineSystem(){
   if(!supabaseReady()) return;
+  if(!window.supabase || typeof window.supabase.createClient !== 'function'){
+    authError('مكتبة Supabase لم يتم تحميلها. تأكد أن الموقع متصل بالإنترنت ثم أعد تحميل الصفحة.');
+    return;
+  }
   sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const {data:{session},error:sessionError} = await sb.auth.getSession();
   if(sessionError) console.error(sessionError);
@@ -568,10 +572,10 @@ async function loginPlayer(){
     authError('لسه ما حطيناش بيانات Supabase داخل الكود. نفّذ خطوات الإعداد الأول.');
     return;
   }
-  const username=$('login-username').value.trim().toLowerCase();
-  const password=$('login-password').value;
+  const username=document.getElementById('login-username').value.trim().toLowerCase();
+  const password=document.getElementById('login-password').value;
   if(!username || !password){authError('اكتب اسم المستخدم وكلمة المرور.');return;}
-  $('login-btn').disabled=true;
+  document.getElementById('login-btn').disabled=true;
   try{
     // الحسابات التي ينشئها الأدمن تستخدم username@player.local كإيميل داخلي.
     const {data,error}=await sb.auth.signInWithPassword({
@@ -596,8 +600,8 @@ async function loginPlayer(){
     if(ok) showOnlineLobby();
   }catch(e){
     console.error(e);
-    authError('حصل خطأ غير متوقع أثناء تسجيل الدخول. افتح Console لو محتاج تفاصيل.');
-  }finally{$('login-btn').disabled=false;}
+    authError('تعذر تسجيل الدخول. تأكد من رابط Supabase والمفتاح والحساب، ثم جرّب مرة أخرى.');
+  }finally{document.getElementById('login-btn').disabled=false;}
 }
 
 async function loadOnlineProfile(userId){
@@ -610,8 +614,8 @@ async function loadOnlineProfile(userId){
   }
   onlineUser={id:userId};
   onlineProfile=data;
-  $('online-username').innerText=data.username;
-  $('online-points').innerText=data.points;
+  document.getElementById('online-username').innerText=data.username;
+  document.getElementById('online-points').innerText=data.points;
   await loadInvites();
   subscribeToInvites();
   return true;
@@ -619,7 +623,7 @@ async function loadOnlineProfile(userId){
 
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));
-  $(id).classList.add('active');
+  document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
 }
 function showGuestLanding(){ showScreen('screen-landing'); }
@@ -628,7 +632,7 @@ function showOnlineLobby(){
   showScreen('screen-online');
   loadInvites();
 }
-function updateOnlinePointsUI(){ if(onlineProfile){$('online-points').innerText=onlineProfile.points||0;} }
+function updateOnlinePointsUI(){ if(onlineProfile){document.getElementById('online-points').innerText=onlineProfile.points||0;} }
 
 function randomRoomCode(){
   const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -639,7 +643,7 @@ function randomRoomCode(){
 
 async function createOnlineRoom(){
   if(!onlineProfile){showScreen('screen-auth');return;}
-  const team_count=Number($('online-team-count').value);
+  const team_count=Number(document.getElementById('online-team-count').value);
   for(let tries=0;tries<5;tries++){
     const room_code=randomRoomCode();
     const {data,error}=await sb.from('rooms').insert({
@@ -652,7 +656,7 @@ async function createOnlineRoom(){
 
 async function joinOnlineRoom(){
   if(!onlineProfile){showScreen('screen-auth');return;}
-  const code=$('join-room-code').value.trim().toUpperCase();
+  const code=document.getElementById('join-room-code').value.trim().toUpperCase();
   if(!/^[A-Z0-9]{6}$/.test(code)){onlineError('كود الغرفة لازم يكون 6 حروف/أرقام.');return;}
   const {data:room,error}=await sb.from('rooms').select('*').eq('room_code',code).eq('status','waiting').single();
   if(error||!room){onlineError('الغرفة غير موجودة أو بدأت بالفعل.');return;}
@@ -667,9 +671,9 @@ async function joinOnlineRoom(){
 
 async function enterRoom(room){
   currentRoom=room;
-  $('current-room-box').classList.remove('online-hidden');
-  $('current-room-code').innerText=room.room_code;
-  $('online-team-count').value=room.team_count;
+  document.getElementById('current-room-box').classList.remove('online-hidden');
+  document.getElementById('current-room-code').innerText=room.room_code;
+  document.getElementById('online-team-count').value=room.team_count;
   await refreshRoom();
   subscribeToRoom();
 }
@@ -680,15 +684,15 @@ async function refreshRoom(){
     .select('user_id,ready,players(username,points)')
     .eq('room_id',currentRoom.id);
   if(error)return;
-  $('room-members').innerHTML=(members||[]).map(m=>`
+  document.getElementById('room-members').innerHTML=(members||[]).map(m=>`
     <div class="member-row">
       <span class="member-name">${esc(m.players?.username||'Player')} <small>⭐ ${m.players?.points||0}</small></span>
       <span class="ready-badge ${m.ready?'on':''}">${m.ready?'جاهز':'مش جاهز'}</span>
     </div>`).join('');
   const allReady=members?.length===currentRoom.team_count && members.every(x=>x.ready);
   const isHost=currentRoom.host_user_id===onlineUser.id;
-  $('start-online-game-btn').style.display=isHost&&allReady?'block':'none';
-  $('room-status-text').innerText=`${members?.length||0}/${currentRoom.team_count} لاعبين · ${allReady?'الكل جاهز':'في انتظار اللاعبين'}`;
+  document.getElementById('start-online-game-btn').style.display=isHost&&allReady?'block':'none';
+  document.getElementById('room-status-text').innerText=`${members?.length||0}/${currentRoom.team_count} لاعبين · ${allReady?'الكل جاهز':'في انتظار اللاعبين'}`;
 }
 
 function subscribeToRoom(){
@@ -719,12 +723,12 @@ async function leaveOnlineRoom(){
   }
   if(currentRoomChannel)sb.removeChannel(currentRoomChannel);
   currentRoom=null;
-  $('current-room-box').classList.add('online-hidden');
+  document.getElementById('current-room-box').classList.add('online-hidden');
 }
 
 async function sendRoomInvite(){
   if(!currentRoom||!onlineUser)return;
-  const username=$('invite-username').value.trim().toLowerCase();
+  const username=document.getElementById('invite-username').value.trim().toLowerCase();
   if(!username)return;
   const {data:target}=await sb.from('players').select('user_id,username').eq('username',username).single();
   if(!target){onlineError('اللاعب غير موجود.');return;}
@@ -747,8 +751,8 @@ async function loadInvites(){
     const {data:senders}=await sb.from('players').select('user_id,username').in('user_id',ids);
     (senders||[]).forEach(x=>names[x.user_id]=x.username);
   }
-  $('invite-count').innerText=rows.length;
-  $('invite-list').innerHTML=rows.map(i=>`
+  document.getElementById('invite-count').innerText=rows.length;
+  document.getElementById('invite-list').innerHTML=rows.map(i=>`
     <div class="invite-row">
       <span><b>${esc(names[i.from_user_id]||'Player')}</b> دعاك للغرفة <b>${i.rooms?.room_code||'------'}</b></span>
       <span>
@@ -800,15 +804,15 @@ async function logoutPlayer(){
 
 
 function toggleLoginPassword(){
-  const input=$('login-password');
+  const input=document.getElementById('login-password');
   const btn=document.querySelector('.password-toggle');
   if(!input)return;
   const showing=input.type==='text';
   input.type=showing?'password':'text';
   if(btn)btn.innerText=showing?'إظهار':'إخفاء';
 }
-$('login-password')?.addEventListener('keydown',e=>{if(e.key==='Enter')loginPlayer();});
-$('login-username')?.addEventListener('keydown',e=>{if(e.key==='Enter')$('login-password')?.focus();});
+document.getElementById('login-password')?.addEventListener('keydown',e=>{if(e.key==='Enter')loginPlayer();});
+document.getElementById('login-username')?.addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('login-password')?.focus();});
 
 /* استدعاء مرة واحدة بعد تحميل الصفحة */
 setTimeout(initOnlineSystem,50);
@@ -818,8 +822,8 @@ const originalShowSetup = showSetup;
 showSetup = function(){
   originalShowSetup();
   if(onlineProfile){
-    $('t1-name').value = onlineProfile.username + ' FC';
-    $('t2-name').value = 'Opponent FC';
+    document.getElementById('t1-name').value = onlineProfile.username + ' FC';
+    document.getElementById('t2-name').value = 'Opponent FC';
   }
 };
 
