@@ -341,12 +341,9 @@ async function claimOnlineMatch(){
 </div>
 
 <script>
-/* ==================================================================
-   قاعدة اللاعيبة — حط لاعيبتك هنا بنفس الشكل: {n:"الاسم", r:التقييم, t:"premium|legend|good|bad"}
-   (السطور اللي تحت بتكمّل الناقص بلاعيبة تجريبية لحد 40 لكل مركز — امسحها بعد ما تحط لاعيبتك)
-================================================================== */
-const DB={
-ATT: [
+/* ===================== قاعدة اللاعبين الكاملة ===================== */
+const DB = {
+  ATT: [
     // --- Premium Prime Attackers - 20 players ---
 {n:"غابرييل باتيستوتا 💥 ", r:151, t:"premium"},
 {n:"رونالدو نازاريو البرايم ", r:150, t:"premium"},
@@ -778,9 +775,8 @@ COACH: [
     {n:"مدرب محلي", r:55, t:"bad"}, {n:"مدرب هواة", r:45, t:"bad"}, {n:"مدرب مؤقت", r:50, t:"bad"},
     {n:"فرانك دي بور", r:60, t:"bad"}, {n:"غاري نيفيل (مدرب)", r:58, t:"bad"}, {n:"فابيو كانافارو (مدرب)", r:62, t:"bad"},
     {n:"تيري هنري (مدرب)", r:61, t:"bad"}
+  ]
 };
-(function(){const L={ATT:'مهاجم',MID:'وسط',DEF:'مدافع',GK:'حارس',COACH:'مدرب'},T=[['premium',140],['legend',110],['good',88],['bad',65]];
-  for(const c in DB)for(let i=DB[c].length;i<40;i++){const t=T[i%4];DB[c].push({n:`${L[c]} ${i+1}`,r:t[1]+(i%7),t:t[0]});}})();
 </script>
 <script>
 /* ===================== المحرك المحلي (أوفلاين) ===================== */
@@ -1219,22 +1215,21 @@ function showResultsScreen(){
    اللعب المحلي (أوفلاين) شغال زي ما هو بدون أي تغيير.
 ========================================================= */
 (function(){
-  let ch=null, pollT=null, snapT=null, setupT=null, hbT=null, bt=null, lastLog=-1, snapN=0, claimedRoom=null, polling=false, pickUid=null;
-  let chStatus='-', recv=0, sent=0, lastPeer=0, lastAct=0, lastDraftStr='', lastFeedKey='', lastModalKey='';
-  const pend={}, answers={}, seenPrompts=new Set();
+  let ch=null, pollT=null, snapT=null, setupT=null, bt=null, lastLog=-1, snapN=0, claimedRoom=null, polling=false, pickUid=null;
+  const pend={};
   const isHost=()=>!!(currentRoom&&onlineUser&&currentRoom.host_user_id===onlineUser.id);
   const need=()=>Number(currentRoom?.team_count||2);
   const G=()=>!!(onlineMode&&currentRoom);
   const go=id=>{document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));$(id).classList.add('active');window.scrollTo(0,0);};
-  const send=async(ev,d)=>{ if(!ch||!onlineUser)return; sent++;try{await ch.send({type:'broadcast',event:ev,payload:{...d,sender:onlineUser.id}});}catch(e){console.warn('send',ev,e);} };
+  const send=async(ev,d)=>{ if(!ch||!onlineUser)return; try{await ch.send({type:'broadcast',event:ev,payload:{...d,sender:onlineUser.id}});}catch(e){console.warn('send',ev,e);} };
   window.onlineIsHost=isHost;
 
   /* نسخ المحرك الأصلي قبل ما نلفّ حواليه */
   const C={renderPitches,renderTurn,finalizeChoice,onBoxClick,acceptDeal,showVSScreen,startMatch,finishMatch,triggerFx,showEventModal,hideEventModal,pickFromList,chooseOpponent,useProtectCard,useReplaceCard,useNassabCard,showSetup};
 
   /* ---------- حالة اللعبة: تسلسل / تطبيق ---------- */
-  const ser=()=>({teams:state.teams.map(t=>({name:t.name,fmt:t.fmt,onlineUserId:t.onlineUserId,coach:t.coach,cards:t.cards||[],usedEnd:t.usedEnd||[],cheaterUsed:!!t.cheaterUsed,score:t.score||0,penScore:t.penScore,players:(t.players||[]).map(p=>p?{cat:p.cat,label:p.label,data:p.data,isRedCarded:!!p.isRedCarded,protected:!!p.protected}:null)})),draftQueue:state.draftQueue,currentStep:state.currentStep,boxesData:state.boxesData,openedBoxIdx:state.openedBoxIdx,revealed:!!state.revealed,feed:state.feed||[]});
-  const apply=s=>{state.teams=s.teams;state.draftQueue=s.draftQueue;state.currentStep=s.currentStep;state.boxesData=s.boxesData;state.openedBoxIdx=s.openedBoxIdx;state.revealed=s.revealed;state.feed=s.feed||[];teamCount=state.teams.length;if(!state.bracket||state.bracket.length!==(teamCount===2?1:teamCount===3?2:3))setupBracket();};
+  const ser=()=>({teams:state.teams.map(t=>({name:t.name,fmt:t.fmt,onlineUserId:t.onlineUserId,coach:t.coach,cards:t.cards||[],usedEnd:t.usedEnd||[],cheaterUsed:!!t.cheaterUsed,score:t.score||0,penScore:t.penScore,players:(t.players||[]).map(p=>p?{cat:p.cat,label:p.label,data:p.data,isRedCarded:!!p.isRedCarded,protected:!!p.protected}:null)})),draftQueue:state.draftQueue,currentStep:state.currentStep,boxesData:state.boxesData,openedBoxIdx:state.openedBoxIdx,revealed:!!state.revealed});
+  const apply=s=>{state.teams=s.teams;state.draftQueue=s.draftQueue;state.currentStep=s.currentStep;state.boxesData=s.boxesData;state.openedBoxIdx=s.openedBoxIdx;state.revealed=s.revealed;teamCount=state.teams.length;if(!state.bracket||state.bracket.length!==(teamCount===2?1:teamCount===3?2:3))setupBracket();};
   const layout=()=>{state.teams.forEach((t,i)=>{$(`p${i+1}-title`).innerText=`${TEAM_ICONS[i]} ${t.name}`;});$('pitch-wrap-3').style.display=teamCount>=3?'flex':'none';$('pitch-wrap-4').style.display=teamCount>=4?'flex':'none';$('pitches-container').classList.toggle('three',teamCount===3);};
   const bcast=()=>send('fifa-draft-state',{state:ser()});
   const bLater=()=>{clearTimeout(bt);bt=setTimeout(bcast,60);};
@@ -1273,35 +1268,7 @@ function showResultsScreen(){
     box.style.pointerEvents=(mine&&!state.revealed)?'auto':'none';
     $('deal-actions').style.display=(mine&&!state.revealed&&state.openedBoxIdx>=0)?'block':'none';
   }
-  function mirror(){go('screen-arena');layout();C.renderPitches();if(banner())mirrorBoxes();renderFeed();}
-  function renderFeed(){
-    let f=$('pick-feed');
-    if(!f){f=document.createElement('div');f.id='pick-feed';f.style.cssText='background:rgba(2,8,26,.72);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:10px;font-size:13px;max-height:130px;overflow-y:auto';$('screen-arena').insertBefore(f,$('boxes-container'));}
-    const l=(state.feed||[]).slice().reverse();
-    f.style.display=(G()&&l.length)?'block':'none';
-    f.innerHTML='<b style="color:var(--gold)">📢 آخر الاختيارات</b>'+l.map(e=>`<div><span style="color:${TEAM_COLORS[e.c]||'#fff'}">${esc(e.t)}</span> — ${e.reroll?'استخدم '+esc(e.card):'اختار <b>'+esc(e.n)+'</b> (⭐'+e.r+') · '+esc(e.pos)+(e.card?' + '+esc(e.card):'')}</div>`).join('');
-  }
-  function badge(){
-    let b=$('net-badge');
-    if(!b){b=document.createElement('div');b.id='net-badge';b.style.cssText='position:fixed;bottom:8px;left:8px;z-index:200;font-size:11px;padding:4px 10px;border-radius:99px;background:rgba(0,0,0,.75);color:#fff;pointer-events:none';document.body.appendChild(b);}
-    if(!G()){b.style.display='none';return;}
-    b.style.display='block';
-    b.innerText=(Date.now()-lastPeer<7000?'🟢 متصل بالخصم':'🔴 مفيش رسائل من الخصم')+' · قناة: '+chStatus+' · ↑'+sent+' ↓'+recv;
-  }
-  /* نبض المضيف: بيبعت الحالة الكاملة كل ثانيتين، فأي رسالة تضيع بتتعوّض لوحدها */
-  function beat(){
-    badge();
-    if(!G())return;
-    if(!isHost()){send('fifa-ping',{});Object.keys(answers).forEach(id=>send('fifa-answer',{id,idx:answers[id]}));return;}
-    const ph=onlineGame.phase;
-    if(ph==='idle')send('fifa-sync',{phase:'idle'});
-    else if(ph==='setup')send('fifa-sync',{phase:'setup',formations:onlineSetup.formations});
-    else{
-      const d={phase:ph,no:onlineGame.matchNo,a:M.a,b:M.b,state:ser(),modal:onlineGame.modal||null,prompt:onlineGame.prompt||null,results:onlineGame.results||null};
-      if(ph==='match')d.match=matchData(true);
-      send('fifa-sync',d);
-    }
-  }
+  function mirror(){go('screen-arena');layout();C.renderPitches();if(banner())mirrorBoxes();}
 
   /* ---------- أغلفة المحرك (بتشتغل بس لو أونلاين) ---------- */
   renderPitches=function(f){C.renderPitches(f);if(G()&&isHost()&&onlineGame.phase==='draft')bLater();};
@@ -1311,20 +1278,10 @@ function showResultsScreen(){
     C.renderTurn();
     const step=state.draftQueue[state.currentStep];
     if(step){if(banner()&&state.teams[step.teamIdx].onlineUserId!==onlineUser.id)mirrorBoxes();}else banner();
-    renderFeed();
     bcast();
   };
   finalizeChoice=async function(i){
-    if(G()){
-      const step=state.draftQueue[state.currentStep],b=state.boxesData[i];
-      if(step&&b){
-        const t=state.teams[step.teamIdx],rr=b.type==='card'&&b.cardData.id==='reroll';
-        const e={t:t.name,c:step.teamIdx,u:t.onlineUserId,pos:step.slot.label,n:b.player.n,r:b.player.r,card:b.type==='card'?b.cardData.name:'',reroll:rr};
-        state.feed=(state.feed||[]).concat([e]).slice(-8);
-        if(t.onlineUserId!==onlineUser.id&&!rr)showToast(`👀 ${t.name} اختار ${b.player.n} (⭐${b.player.r})`);
-      }
-      state.revealed=true;state.openedBoxIdx=i;renderFeed();bcast();
-    }
+    if(G()){state.revealed=true;state.openedBoxIdx=i;bcast();}
     return C.finalizeChoice(i);
   };
   onBoxClick=async function(idx){
@@ -1332,19 +1289,18 @@ function showResultsScreen(){
     const step=state.draftQueue[state.currentStep];if(!step||state.revealed)return;
     if(state.teams[step.teamIdx].onlineUserId!==onlineUser.id){showToast('⏳ استنى دورك');return;}
     if(isHost()){const was=state.openedBoxIdx;await C.onBoxClick(idx);if(was===-1)bcast();return;}
-    lastAct=Date.now();
     if(state.openedBoxIdx===-1){state.openedBoxIdx=idx;mirrorBoxes();send('fifa-box',{action:'open',idx});}
     else if(state.openedBoxIdx!==idx){$('deal-actions').style.display='none';send('fifa-box',{action:'choose',idx});}
   };
   acceptDeal=async function(){
     if(!G()||isHost())return C.acceptDeal();
     if(state.openedBoxIdx<0||state.revealed)return;
-    $('deal-actions').style.display='none';lastAct=Date.now();
+    $('deal-actions').style.display='none';
     send('fifa-box',{action:'choose',idx:state.openedBoxIdx});
   };
   triggerFx=function(t,i){C.triggerFx(t,i);if(G()&&isHost())send('fifa-fx',{type:t,tIdx:i});};
-  showEventModal=function(t,s,e){C.showEventModal(t,s,e);if(G()&&isHost()){onlineGame.modal={t,s,e};send('fifa-modal',{t,s,e});}};
-  hideEventModal=function(){C.hideEventModal();if(G()&&isHost()){onlineGame.modal=null;send('fifa-modal-hide',{});}};
+  showEventModal=function(t,s,e){C.showEventModal(t,s,e);if(G()&&isHost())send('fifa-modal',{t,s,e});};
+  hideEventModal=function(){C.hideEventModal();if(G()&&isHost())send('fifa-modal-hide',{});};
 
   /* الكروت اللي فيها اختيار: السؤال بيروح للاعب صاحب الفريق */
   const asUid=t=>{pickUid=state.teams[t]?.onlineUserId||null;};
@@ -1353,21 +1309,18 @@ function showResultsScreen(){
   useNassabCard=t=>{asUid(t);return C.useNassabCard(t);};
   chooseOpponent=(t,...a)=>{asUid(t);return C.chooseOpponent(t,...a);};
   pickFromList=function(emoji,title,sub,items){
-    const setModal=(t,x,e)=>{onlineGame.modal={t,s:x,e};send('fifa-modal',{t,s:x,e});};
-    const clearModal=()=>{onlineGame.modal=null;send('fifa-modal-hide',{});};
     if(!G()||!pickUid||pickUid===onlineUser.id){
-      if(G())setModal(title,'⏳ بيختار...',emoji);
-      return C.pickFromList(emoji,title,sub,items).then(r=>{if(G())clearModal();return r;});
+      if(G())send('fifa-modal',{t:title,s:'⏳ بيختار...',e:emoji});
+      return C.pickFromList(emoji,title,sub,items).then(r=>{if(G())send('fifa-modal-hide',{});return r;});
     }
     return new Promise(res=>{
       const id=Math.random().toString(36).slice(2),ok=items.map((x,i)=>x.disabled?-1:i).filter(i=>i>=0);
       const to=setTimeout(()=>{if(pend[id]){delete pend[id];res(ok.length?ok[Math.floor(Math.random()*ok.length)]:0);}},90000);
       pend[id]=r=>{clearTimeout(to);res(r);};
       C.showEventModal(title,'⏳ في انتظار اختيار اللاعب...',emoji);
-      setModal(title,'⏳ في انتظار اختيار اللاعب...',emoji);
-      onlineGame.prompt={id,to:pickUid,emoji,title,sub,items};
-      send('fifa-prompt',onlineGame.prompt);
-    }).then(r=>{C.hideEventModal();clearModal();onlineGame.prompt=null;return r;});
+      send('fifa-modal',{t:title,s:'⏳ في انتظار اختيار اللاعب...',e:emoji});
+      send('fifa-prompt',{id,to:pickUid,emoji,title,sub,items});
+    }).then(r=>{C.hideEventModal();send('fifa-modal-hide',{});return r;});
   };
 
   /* ---------- VS + المباراة ---------- */
@@ -1380,13 +1333,12 @@ function showResultsScreen(){
     send('fifa-vs',{state:ser(),a,b,no});
     setTimeout(()=>{if(onlineGame.phase==='vs'&&state.bracketIdx+1===no)startMatch(false);},4500);
   };
-  const matchData=force=>{
+  const snap=force=>{
     const log=$('m-log'),n=log.children.length;
     const d={no:state.bracketIdx+1,t1:$('m-team1').innerText,t2:$('m-team2').innerText,score:$('m-score').innerText,timer:$('m-timer').innerText,label:$('match-label').innerText};
     if(force===true||n!==lastLog||snapN++%5===0){d.log=log.innerHTML;lastLog=n;}
-    return d;
+    send('fifa-match',d);
   };
-  const snap=force=>send('fifa-match',matchData(force));
   startMatch=function(rp){
     if(!G())return C.startMatch(rp);
     if(!isHost())return;
@@ -1408,7 +1360,7 @@ function showResultsScreen(){
     const L=getLoserSide(),uid=L===-1?null:mTeam(L===0?1:0)?.onlineUserId;
     const g=id=>$(id);
     const res={banner:g('winner-banner').innerText,motm:g('motm-banner').innerText,tour:g('tour-summary').innerText,n1:g('res-t1-name').innerText,n2:g('res-t2-name').innerText,c1:g('res-t1-name').style.color,c2:g('res-t2-name').style.color,l1:g('res-t1-list').innerHTML,l2:g('res-t2-list').innerHTML,winner:uid};
-    onlineGame.phase='finished';onlineGame.results=res;
+    onlineGame.phase='finished';
     if(uid&&sb&&currentRoom){try{await sb.from('matches').insert({room_id:currentRoom.id,winner_user_id:uid});}catch(e){console.warn('matches insert',e);}}
     send('fifa-results',res);
     if(uid===onlineUser.id)tryClaim();
@@ -1422,60 +1374,8 @@ function showResultsScreen(){
   window.newGame=function(){if(onlineMode)leave();else location.reload();};
 
   /* ---------- استقبال الرسائل ---------- */
-  /* ---- تطبيق الحالة عند اللاعب التاني (بتشتغل من الرسالة المباشرة ومن النبض) ---- */
-  function gDraft(st){
-    const str=JSON.stringify(st);
-    if(onlineGame.phase==='draft'&&str===lastDraftStr)return;
-    lastDraftStr=str;onlineGame.phase='draft';
-    apply(st);mirror();
-    const e=(st.feed||[]).slice(-1)[0],k=e?JSON.stringify(e):'';
-    if(k&&k!==lastFeedKey){lastFeedKey=k;if(e.u!==onlineUser.id&&!e.reroll)showToast(`👀 ${e.t} اختار ${e.n} (⭐${e.r})`);}
-  }
-  function gVS(p){
-    if(!p||!p.state||p.no<(onlineGame.matchNo||0))return;
-    if(onlineGame.phase==='vs'&&onlineGame.matchNo===p.no)return;
-    onlineGame.phase='vs';onlineGame.matchNo=p.no;
-    apply(p.state);layout();C.renderPitches();C.showVSScreen(p.a,p.b,p.no);
-    const b=document.querySelector('#screen-vs button');if(b)b.style.display='none';
-  }
-  function gMatch(p){
-    if(!p||onlineGame.phase==='finished'||p.no<(onlineGame.matchNo||0))return;
-    if(onlineGame.phase!=='match'||onlineGame.matchNo!==p.no){onlineGame.phase='match';onlineGame.matchNo=p.no;go('screen-match');document.querySelector('.match-actions').style.display='none';}
-    $('m-team1').innerText=p.t1;$('m-team2').innerText=p.t2;$('m-score').innerText=p.score;$('m-timer').innerText=p.timer;$('match-label').innerText=p.label||'';
-    if(p.log!==undefined){const l=$('m-log');l.innerHTML=p.log;l.scrollTop=l.scrollHeight;}
-  }
-  function gResults(p){
-    if(!p||onlineGame.resShown)return;
-    onlineGame.resShown=true;onlineGame.phase='finished';go('screen-results');
-    $('winner-banner').innerText=p.banner;$('motm-banner').innerText=p.motm;$('tour-summary').innerText=p.tour;
-    $('res-t1-name').innerText=p.n1;$('res-t2-name').innerText=p.n2;$('res-t1-name').style.color=p.c1;$('res-t2-name').style.color=p.c2;
-    $('res-t1-list').innerHTML=p.l1;$('res-t2-list').innerHTML=p.l2;
-    if(p.winner===onlineUser.id)tryClaim();
-  }
-  function gPrompt(p){
-    if(!p||p.to!==onlineUser.id||seenPrompts.has(p.id))return;
-    seenPrompts.add(p.id);C.hideEventModal();
-    C.pickFromList(p.emoji,p.title,p.sub,p.items).then(i=>{answers[p.id]=i;send('fifa-answer',{id:p.id,idx:i});});
-  }
-  function gSync(p){
-    if(p.phase==='setup'){
-      onlineSetup.formations=Object.assign({},p.formations||{},onlineSetup.formations);
-      if(onlineGame.phase==='idle')beginSetup();else if(onlineGame.phase==='setup')renderSetup();
-    }
-    else if(p.phase==='draft'){if(Date.now()-lastAct>1500)gDraft(p.state);}
-    else if(p.phase==='vs')gVS(p);
-    else if(p.phase==='match'){if(p.match)gMatch(p.match);}
-    else if(p.phase==='finished')gResults(p.results);
-    const em=$('event-modal').classList.contains('active');
-    if(p.modal){const k=JSON.stringify(p.modal);if(!em||lastModalKey!==k){lastModalKey=k;C.showEventModal(p.modal.t,p.modal.s,p.modal.e);}}
-    else if(em){C.hideEventModal();lastModalKey='';}
-    Object.keys(answers).forEach(id=>{if(!p.prompt||p.prompt.id!==id)delete answers[id];});
-    if(p.prompt)gPrompt(p.prompt);
-  }
   function onMsg(ev,p){
     if(!p||p.sender===onlineUser?.id)return;
-    lastPeer=Date.now();recv++;
-    if(ev==='fifa-ping')return;
     if(ev==='fifa-formation'){
       onlineSetup.formations[p.uid]={name:p.name,fmt:p.fmt,username:p.username};
       if(onlineGame.phase==='setup'){renderSetup();if(isHost())maybeDraft();}
@@ -1487,22 +1387,36 @@ function showResultsScreen(){
       else if(ev==='fifa-answer'&&pend[p.id]){const f=pend[p.id];delete pend[p.id];f(p.idx);}
       return;
     }
-    if(ev==='fifa-sync')gSync(p);
-    else if(ev==='fifa-draft-state')gDraft(p.state);
-    else if(ev==='fifa-vs')gVS(p);
-    else if(ev==='fifa-match')gMatch(p);
+    if(ev==='fifa-draft-state'){onlineGame.phase='draft';apply(p.state);mirror();}
+    else if(ev==='fifa-vs'){onlineGame.phase='vs';onlineGame.matchNo=p.no;apply(p.state);layout();C.renderPitches();C.showVSScreen(p.a,p.b,p.no);const b=document.querySelector('#screen-vs button');if(b)b.style.display='none';}
+    else if(ev==='fifa-match'){
+      if(p.no!==onlineGame.matchNo)return;
+      if(onlineGame.phase!=='match'){onlineGame.phase='match';go('screen-match');document.querySelector('.match-actions').style.display='none';}
+      $('m-team1').innerText=p.t1;$('m-team2').innerText=p.t2;$('m-score').innerText=p.score;$('m-timer').innerText=p.timer;$('match-label').innerText=p.label||'';
+      if(p.log!==undefined){const l=$('m-log');l.innerHTML=p.log;l.scrollTop=l.scrollHeight;}
+    }
     else if(ev==='fifa-fx')C.triggerFx(p.type,p.tIdx);
     else if(ev==='fifa-modal')C.showEventModal(p.t,p.s,p.e);
     else if(ev==='fifa-modal-hide')C.hideEventModal();
-    else if(ev==='fifa-prompt')gPrompt(p);
-    else if(ev==='fifa-results')gResults(p);
+    else if(ev==='fifa-prompt'){
+      if(p.to!==onlineUser.id)return;
+      C.hideEventModal();
+      C.pickFromList(p.emoji,p.title,p.sub,p.items).then(i=>send('fifa-answer',{id:p.id,idx:i}));
+    }
+    else if(ev==='fifa-results'){
+      onlineGame.phase='finished';go('screen-results');
+      $('winner-banner').innerText=p.banner;$('motm-banner').innerText=p.motm;$('tour-summary').innerText=p.tour;
+      $('res-t1-name').innerText=p.n1;$('res-t2-name').innerText=p.n2;$('res-t1-name').style.color=p.c1;$('res-t2-name').style.color=p.c2;
+      $('res-t1-list').innerHTML=p.l1;$('res-t2-list').innerHTML=p.l2;
+      if(p.winner===onlineUser.id)tryClaim();
+    }
   }
   async function hostBox(p){
     const step=state.draftQueue[state.currentStep];
     if(!step||isProcessingTurn||state.revealed||state.teams[step.teamIdx].onlineUserId!==p.sender)return;
     const i=Number(p.idx);if(!(i>=0&&i<4))return;
     if(p.action==='open'){if(state.openedBoxIdx===-1){state.openedBoxIdx=i;mirrorBoxes();bcast();}}
-    else if(p.action==='choose'){isProcessingTurn=true;await finalizeChoice(i);}
+    else if(p.action==='choose'&&state.openedBoxIdx>=0){isProcessingTurn=true;await finalizeChoice(i);}
   }
 
   /* ---------- اللوبي ---------- */
@@ -1555,16 +1469,15 @@ function showResultsScreen(){
   }
   function resetGame(){
     onlineSetup={me:null,other:null,ready:{},formations:{},members:[]};
-    onlineGame={phase:'idle',hostId:null,teams:null,matchNo:0};
-    clearInterval(snapT);clearInterval(setupT);clearInterval(hbT);
-    lastDraftStr='';lastFeedKey='';lastModalKey='';seenPrompts.clear();Object.keys(answers).forEach(k=>delete answers[k]);
+    onlineGame={phase:'idle',hostId:null,teams:null};
+    clearInterval(snapT);clearInterval(setupT);
   }
   async function bind(){
     if(ch){try{await sb.removeChannel(ch);}catch(_){}}
     ch=sb.channel('fifa-online:'+currentRoom.id,{config:{broadcast:{self:false}}});
     ch.on('broadcast',{event:'*'},m=>onMsg(m.event,m.payload));
     currentRoomChannel=ch;
-    await new Promise(res=>{let d=false;const t=setTimeout(()=>{if(!d){d=true;res();}},3000);ch.subscribe(s=>{chStatus=s;badge();if(!d&&['SUBSCRIBED','CHANNEL_ERROR','TIMED_OUT'].includes(s)){d=true;clearTimeout(t);res();}});});
+    await new Promise(res=>{let d=false;const t=setTimeout(()=>{if(!d){d=true;res();}},3000);ch.subscribe(s=>{if(!d&&['SUBSCRIBED','CHANNEL_ERROR','TIMED_OUT'].includes(s)){d=true;clearTimeout(t);res();}});});
   }
   async function enterRoom(room){
     if(!room||!onlineUser||!sb)return;
@@ -1573,7 +1486,6 @@ function showResultsScreen(){
     await bind();await refreshRoom();
     $('current-room-box').classList.remove('online-hidden');$('current-room-code').innerText=room.room_code;
     clearInterval(pollT);pollT=setInterval(poll,2500);
-    clearInterval(hbT);hbT=setInterval(beat,2000);beat();
     if(room.status==='playing')await beginSetup();else showOnlineLobby();
   }
   async function leave(msg){
@@ -1584,7 +1496,6 @@ function showResultsScreen(){
     ch=null;currentRoomChannel=null;currentRoom=null;onlineMode=false;
     $('current-room-box')?.classList.add('online-hidden');
     if(uid)try{localStorage.removeItem('fifa_current_room_'+uid);}catch(_){}
-    chStatus='-';const pf=$('pick-feed');if(pf)pf.style.display='none';badge();
     if(msg)showToast(msg);
     showOnlineLobby();
   }
@@ -1655,7 +1566,7 @@ function showResultsScreen(){
     state.draftQueue=[];
     for(let i=0;i<11;i++)state.teams.forEach((t,ti)=>state.draftQueue.push({teamIdx:ti,slot:t.slots[i],slotIdx:i}));
     state.teams.forEach((t,ti)=>state.draftQueue.push({teamIdx:ti,slot:{cat:'COACH',label:'المدرب'},slotIdx:-1}));
-    state.currentStep=0;state.revealed=false;state.feed=[];usedPlayers.clear();setupBracket();
+    state.currentStep=0;state.revealed=false;usedPlayers.clear();setupBracket();
     go('screen-arena');C.renderPitches();renderTurn();
   }
 
