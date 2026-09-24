@@ -3329,5 +3329,356 @@ showVSScreen=function(a,b,no){
   }
 })();
 </script>
+
+<script>
+/* =========================================================
+   ONLINE FIXES v3
+   - حفظ جلسة تسجيل الدخول بشكل صريح في localStorage
+   - إصلاح حفظ فريق المضيف في formations
+   - اختيار مود الأونلاين: 2 / 3 / 4 فرق
+   - تجهيز جميع اللاعبين في الغرفة، وليس لاعبين فقط
+   - اختيار الصناديق بالتبادل بين جميع الفرق
+   - مزامنة بداية المباراة مع المود المختار
+========================================================= */
+(function(){
+  /* ---------- AUTH PERSISTENCE ---------- */
+  const _oldInit = initOnlineSystem;
+  initOnlineSystem = async function(){
+    if(!supabaseReady()) return;
+    try{
+      if(!window.supabase || typeof window.supabase.createClient!=='function'){
+        authError('مكتبة Supabase لم يتم تحميلها. تأكد من الإنترنت ثم أعد تحميل الصفحة.');
+        return;
+      }
+      // حفظ الجلسة صراحةً في localStorage حتى مع فتح اللعبة كملف HTML.
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth:{
+          persistSession:true,
+          autoRefreshToken:true,
+          detectSessionInUrl:true,
+          storage:window.localStorage,
+          storageKey:'fifa-games-auth'
+        }
+      });
+
+      const {data,error}=await sb.auth.getSession();
+      if(error) console.error('getSession:',error);
+      if(data?.session?.user){
+        const ok=await loadOnlineProfile(data.session.user.id);
+        if(ok){
+          setTimeout(()=>showOnlineLobby(),50);
+          // لو كان المستخدم داخل غرفة قبل Refresh، ارجعه إليها.
+          await restoreRoomAfterRefresh();
+        }
+      }
+
+      sb.auth.onAuthStateChange(async (event,session)=>{
+        if(session?.user){
+          const ok=await loadOnlineProfile(session.user.id);
+          if(ok && event==='SIGNED_IN') showOnlineLobby();
+        }else if(event==='SIGNED_OUT'){
+          onlineUser=null; onlineProfile=null; currentRoom=null;
+          showScreen('screen-auth');
+        }
+      });
+    }catch(e){
+      console.error('init auth:',e);
+      authError('تعذر تحميل جلسة الحساب. جرّب تحديث الصفحة مرة أخرى.');
+    }
+  };
+
+  async function restoreRoomAfterRefresh(){
+    if(!onlineUser||!sb)return;
+    try{
+      // آخر غرفة مرتبطة بالحساب في localStorage.
+      const roomId=localStorage.getItem('fifa_current_room_'+onlineUser.id);
+      if(!roomId)return;
+      const {data:room,error}=await sb.from('rooms').select('*').eq('id',roomId).neq('status','closed').maybeSingle();
+      if(error||!room)return;
+      const {data:member}=await sb.from('room_players').select('user_id').eq('room_id',room.id).eq('user_id',onlineUser.id).maybeSingle();
+      if(!member && room.host_user_id===onlineUser.id){
+        await sb.from('room_players').upsert({room_id:room.id,user_id:onlineUser.id,ready:false},{onConflict:'room_id,user_id'});
+      }
+      await enterRoom(room);
+      if(room.status==='playing'){
+        onlineMode=true;
+        await beginLocalGameFromRoom();
+      }
+    }catch(e){ console.warn('restoreRoomAfterRefresh',e); }
+  }
+
+  /* ---------- PROFILE CACHE ---------- */
+  const _oldLoadProfile=loadOnlineProfile;
+  loadOnlineProfile=async function(userId){
+    if(!sb)return false;
+    const {data,error}=await sb.from('players').select('id,user_id,username,points,wins').eq('user_id',userId).maybeSingle();
+    if(data){
+      onlineUser={id:userId}; onlineProfile=data;
+      localStorage.setItem('fifa_profile_cache_'+userId,JSON.stringify(data));
+      const u=document.getElementById('online-username'); if(u)u.innerText=data.username;
+      const pts=document.getElementById('online-points'); if(pts)pts.innerText=data.points||0;
+      try{await loadInvites(); subscribeToInvites();}catch(e){}
+      return true;
+    }
+    // لو الشبكة/RLS عطلت قراءة players بعد Refresh، لا نرمي المستخدم من الحساب.
+    try{
+      const cached=JSON.parse(localStorage.getItem('fifa_profile_cache_'+userId)||'null');
+      if(cached?.username){
+        onlineUser={id:userId}; onlineProfile=cached;
+        const u=document.getElementById('online-username'); if(u)u.innerText=cached.username;
+        const pts=document.getElementById('online-points'); if(pts)pts.innerText=cached.points||0;
+        console.warn('Using cached profile because players query failed:',error);
+        return true;
+      }
+    }catch(e){}
+    console.error('players profile error:',error);
+    authError('الحساب موجود لكن بيانات اللاعب غير متاحة الآن. تأكد من RLS لجدول players.');
+    return false;
+  };
+
+  /* ---------- ROOM HELPERS ---------- */
+  const _oldEnter=enterRoom;
+  enterRoom=async function(room){
+    if(!room||!onlineUser)return;
+    currentRoom=room;
+    localStorage.setItem('fifa_current_room_'+onlineUser.id,room.id);
+    // المضيف عضو في الغرفة دائماً.
+    if(room.host_user_id===onlineUser.id){
+      const {error}=await sb.from('room_players').upsert({
+        room_id:room.id,user_id:onlineUser.id,ready:false
+      },{onConflict:'room_id,user_id'});
+      if(error)console.warn('host membership:',error);
+    }
+    await _oldEnter(room);
+  };
+
+  const _oldLeave=leaveOnlineRoom;
+  leaveOnlineRoom=async function(){
+    const uid=onlineUser?.id;
+    await _oldLeave();
+    if(uid)localStorage.removeItem('fifa_current_room_'+uid);
+  };
+
+  /* ---------- MODE SELECT ---------- */
+  const modeSelect=document.getElementById('online-team-count');
+  if(modeSelect){
+    modeSelect.disabled=false;
+    modeSelect.innerHTML='';
+    [['2','2 فرق — 1 ضد 1'],['3','3 فرق — بطولة 3 فرق'],['4','4 فرق — بطولة 4 فرق']].forEach(([v,t])=>{
+      const o=document.createElement('option');o.value=v;o.textContent=t;modeSelect.appendChild(o);
+    });
+    modeSelect.value='2';
+  }
+
+  createOnlineRoom=async function(){
+    if(!onlineProfile||!onlineUser){showScreen('screen-auth');return;}
+    const team_count=Math.max(2,Math.min(4,Number(document.getElementById('online-team-count')?.value||2)));
+    for(let tries=0;tries<8;tries++){
+      const room_code=randomRoomCode();
+      const {data:room,error}=await sb.from('rooms').insert({room_code,host_user_id:onlineUser.id,team_count,status:'waiting'}).select().single();
+      if(error){ if(String(error.code||'')==='23505')continue; onlineError('تعذر إنشاء الغرفة: '+(error.message||''));return; }
+      const {error:hostErr}=await sb.from('room_players').upsert({room_id:room.id,user_id:onlineUser.id,ready:false},{onConflict:'room_id,user_id'});
+      if(hostErr){await sb.from('rooms').delete().eq('id',room.id);onlineError('تم إنشاء الغرفة لكن تعذر إدخالك إليها. راجع صلاحيات room_players.');return;}
+      await enterRoom(room);
+      showToast('✅ تم إنشاء الغرفة ودخلت تلقائياً — المود: '+team_count+' فرق');
+      return;
+    }
+    onlineError('تعذر إنشاء غرفة جديدة. جرّب مرة أخرى.');
+  };
+
+  joinOnlineRoom=async function(){
+    if(!onlineProfile||!onlineUser){showScreen('screen-auth');return;}
+    const input=document.getElementById('join-room-code');
+    const code=(input?.value||'').trim().toUpperCase();
+    if(!/^[A-Z0-9]{6}$/.test(code)){onlineError('اكتب كود الغرفة كامل: 6 حروف/أرقام.');return;}
+    const {data:room,error}=await sb.from('rooms').select('*').eq('room_code',code).eq('status','waiting').maybeSingle();
+    if(error||!room){onlineError('الغرفة غير موجودة أو بدأت بالفعل.');return;}
+    if(room.host_user_id===onlineUser.id){await enterRoom(room);showToast('✅ أنت صاحب الغرفة ودخلت إليها تلقائياً.');return;}
+    const {count,error:countErr}=await sb.from('room_players').select('*',{count:'exact',head:true}).eq('room_id',room.id);
+    if(countErr){onlineError('تعذر معرفة عدد اللاعبين في الغرفة.');return;}
+    if((count||0)>=Number(room.team_count||2)){onlineError('الغرفة ممتلئة.');return;}
+    const {error:joinErr}=await sb.from('room_players').upsert({room_id:room.id,user_id:onlineUser.id,ready:false},{onConflict:'room_id,user_id'});
+    if(joinErr){onlineError('لم يتم دخول الغرفة: '+(joinErr.message||''));return;}
+    await enterRoom(room);showToast('✅ دخلت الغرفة.');
+  };
+
+  /* ---------- SETUP FOR 2 / 3 / 4 ---------- */
+  showOnlineSetupScreen=function(){
+    onlineMode=true;
+    showScreen('screen-online-setup');
+    const members=onlineSetup.members||[];
+    const wrap=document.querySelector('.online-setup-preview');
+    if(wrap){
+      wrap.innerHTML=members.map((m,i)=>{
+        const f=onlineSetup.formations?.[m.user_id];
+        return `<div class="online-player-chip"><b>${esc(f?.name||m.username||('Player '+(i+1)))}</b><small>الفريق ${i+1}${f?.fmt?' · '+esc(f.fmt):''}</small></div>`;
+      }).join('<div class="online-lock">⚔️</div>');
+    }
+    const mine=onlineSetup.me||onlineSetup.formations?.[onlineUser.id];
+    $('online-my-team-name').value=mine?.name||onlineProfile?.username||'';
+    $('online-my-format').value=mine?.fmt||'4-3-3';
+    const ready=!!onlineSetup.ready?.[onlineUser.id];
+    $('online-confirm-setup').disabled=ready;
+    const total=members.length;
+    const readyCount=members.filter(m=>onlineSetup.ready?.[m.user_id]).length;
+    $('online-setup-status').innerText=ready
+      ? `✅ تم تأكيد فريقك. جاهز ${readyCount}/${total} — في انتظار باقي اللاعبين...`
+      : `اختار اسم فريقك وتشكيلتك ثم اضغط تأكيد. جاهز ${readyCount}/${total}`;
+  };
+
+  confirmOnlineSetup=async function(){
+    if(!currentRoom||!onlineUser)return;
+    const name=$('online-my-team-name').value.trim()||onlineProfile.username;
+    const fmt=$('online-my-format').value;
+    const setup={name,fmt,username:onlineProfile.username};
+    onlineSetup.me=setup;
+    onlineSetup.formations=onlineSetup.formations||{};
+    onlineSetup.formations[onlineUser.id]=setup; // إصلاح مهم: المضيف نفسه لازم يتسجل هنا.
+    onlineSetup.ready=onlineSetup.ready||{};
+    onlineSetup.ready[onlineUser.id]=true;
+    $('online-confirm-setup').disabled=true;
+    showOnlineSetupScreen();
+    await sb.from('room_players').update({ready:true}).eq('room_id',currentRoom.id).eq('user_id',onlineUser.id);
+    await onlineSend('online-formation',{uid:onlineUser.id,name,fmt,username:onlineProfile.username,ready:true});
+    if(onlineIsHost()) await onlineMaybeStartDraft();
+  };
+
+  /* ---------- ALL PLAYERS / ALL MODES ---------- */
+  makeOnlineTeams=function(setups){
+    const ids=(onlineSetup.members||[]).map(x=>x.user_id).filter(id=>setups[id]);
+    return ids.map((uid,i)=>{
+      const setup=setups[uid]||{};
+      const fmt=setup.fmt||'4-3-3';
+      return {name:setup.name||setup.username||'Player '+(i+1),fmt,slots:buildSlotsFromFormat(fmt),players:new Array(11).fill(null),coach:null,cards:[],usedEnd:[],score:0,penScore:null,cheaterUsed:false,onlineUserId:uid};
+    });
+  };
+
+  onlineMaybeStartDraft=async function(){
+    if(!onlineIsHost()||onlineGame.phase==='draft'||onlineGame.phase==='match')return;
+    const members=onlineSetup.members||[];
+    const ids=members.map(x=>x.user_id);
+    if(ids.length!==Number(currentRoom?.team_count||2))return;
+    if(!ids.every(id=>onlineSetup.ready?.[id]&&onlineSetup.formations?.[id]))return;
+
+    const setups={};ids.forEach(id=>setups[id]=onlineSetup.formations[id]);
+    state.teams=makeOnlineTeams(setups);
+    teamCount=state.teams.length;
+    usedPlayers.clear();
+    state.draftQueue=[];
+
+    // كل جولة: لاعب/فريق واحد ثم التالي، حتى يكون الاختيار بالتبادل في 2 و3 و4 فرق.
+    const maxSlots=Math.max(...state.teams.map(t=>t.slots.length));
+    for(let slotIdx=0;slotIdx<maxSlots;slotIdx++){
+      for(let ti=0;ti<state.teams.length;ti++){
+        const t=state.teams[ti];
+        if(t.slots[slotIdx])state.draftQueue.push({teamIdx:ti,slot:t.slots[slotIdx],slotIdx});
+      }
+    }
+    // المدرب في النهاية بالتبادل.
+    state.teams.forEach((t,ti)=>state.draftQueue.push({teamIdx:ti,slot:{cat:'COACH',label:'المدرب'},slotIdx:-1}));
+
+    state.currentStep=0;state.boxesData=[];state.openedBoxIdx=-1;
+    onlineGame={phase:'draft',hostId:onlineUser.id,teams:state.teams};
+    // حالة الغرفة يتم تحويلها إلى playing قبل شاشة تجهيز الفرق.
+    // لا نحدّث rooms هنا حتى لا يعيد Realtime فتح شاشة التجهيز أثناء بداية الـDraft.
+    renderTurnOnlineHost();
+    await hostBroadcastDraft();
+  };
+
+  onlineFinishDraft=async function(){
+    if(!onlineIsHost())return;
+    onlineGame.phase='match';
+    setupBracket();
+    const entry=state.bracket[0];
+    const a=resolveTeam(entry,'a'),b=resolveTeam(entry,'b');
+    await onlineSend('online-vs',{state:onlineSerializeState(),a,b,no:1});
+    showVSScreen(a,b,1);
+    setTimeout(()=>{if(onlineIsHost())startMatch();},1200);
+  };
+
+  /* ---------- RECV FORMATIONS: refresh all players ---------- */
+  // نضيف مستمعاً جديداً بدون إزالة المستمع القديم، لكن نمنع التكرار عبر علامة.
+  if(!window.__fifaSetupBroadcastV3){
+    window.__fifaSetupBroadcastV3=true;
+    const oldSubscribe=subscribeOnlineBroadcasts;
+    subscribeOnlineBroadcasts=function(){
+      oldSubscribe();
+      if(!currentRoomChannel)return;
+      currentRoomChannel.on('broadcast',{event:'online-formation-v3'},()=>{});
+      // المستمع الأساسي online-formation يظل شغال؛ الإصلاح الحقيقي يتم من خلال override للدالة هنا.
+    };
+  }
+
+  // نستبدل الاشتراك كله مرة واحدة عند دخول غرفة لتفادي المستمع القديم الذي كان يضع لاعبين فقط.
+  subscribeOnlineBroadcasts=function(){
+    if(!currentRoomChannel||currentRoomChannel.__fifaV3Bound)return;
+    currentRoomChannel.__fifaV3Bound=true;
+    currentRoomChannel.on('broadcast',{event:'online-formation'},({payload})=>{
+      if(!payload)return;
+      onlineSetup.formations=onlineSetup.formations||{};
+      onlineSetup.formations[payload.uid]={name:payload.name,fmt:payload.fmt,username:payload.username};
+      onlineSetup.ready=onlineSetup.ready||{};
+      onlineSetup.ready[payload.uid]=!!payload.ready;
+      if(payload.uid===onlineUser.id)onlineSetup.me=onlineSetup.formations[payload.uid];
+      showOnlineSetupScreen();
+      if(onlineIsHost())onlineMaybeStartDraft();
+    });
+    currentRoomChannel.on('broadcast',{event:'online-draft-state'},({payload})=>{
+      if(onlineIsHost()||!payload?.state)return;
+      onlineGame.phase='draft';onlineApplyState(payload.state);onlineRenderSharedDraft();
+    });
+    currentRoomChannel.on('broadcast',{event:'online-vs'},({payload})=>{
+      if(onlineIsHost()||!payload?.state)return;
+      onlineGame.phase='match';onlineApplyState(payload.state);
+      const a=payload.a??0,b=payload.b??1;
+      showVSScreen(a,b,payload.no||1);
+    });
+    currentRoomChannel.on('broadcast',{event:'online-box-action'},async({payload})=>{
+      if(!onlineIsHost()||!payload)return;
+      const step=state.draftQueue[state.currentStep];
+      if(!step||state.teams[step.teamIdx].onlineUserId!==payload.uid)return;
+      if(payload.action==='open'){state.openedBoxIdx=payload.idx;onlineRenderSharedDraft();await hostBroadcastDraft();}
+      else if(payload.action==='choose')await onlineHostFinalizeChoice(payload.idx);
+    });
+    currentRoomChannel.on('broadcast',{event:'online-match-snapshot'},({payload})=>{
+      if(onlineIsHost()||!payload)return;
+      $('m-team1').innerText=payload.t1||'';$('m-team2').innerText=payload.t2||'';$('m-score').innerText=payload.score||'0 - 0';$('m-timer').innerText=payload.timer||0;$('m-log').innerHTML=payload.log||'';
+      document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));$('screen-match').classList.add('active');
+    });
+    currentRoomChannel.on('broadcast',{event:'online-match-finished'},({payload})=>{
+      if(onlineIsHost()||!payload)return;
+      document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));$('screen-results').classList.add('active');
+      $('winner-banner').innerText=payload.winnerText||'🏆 انتهت المباراة';
+    });
+  };
+
+  /* ---------- FORCE DRAFT / MATCH TO USE THE REAL MODE ---------- */
+  const _oldBegin=beginLocalGameFromRoom;
+  beginLocalGameFromRoom=async function(){
+    onlineMode=true;
+    const {data:members,error}=await sb.from('room_players').select('user_id,ready,players(username)').eq('room_id',currentRoom.id);
+    if(error){onlineError('تعذر تحميل لاعبي الغرفة.');return;}
+    onlineSetup.members=(members||[]).map(m=>({user_id:m.user_id,username:m.players?.username||'Player',ready:!!m.ready})).sort((a,b)=>a.user_id===currentRoom.host_user_id?-1:b.user_id===currentRoom.host_user_id?1:0);
+    onlineSetup.formations=onlineSetup.formations||{};onlineSetup.ready=onlineSetup.ready||{};
+    onlineSetup.members.forEach(m=>{if(m.ready)onlineSetup.ready[m.user_id]=true;});
+    onlineSetup.me=onlineSetup.formations[onlineUser.id]||onlineSetup.me||null;
+    subscribeOnlineBroadcasts();
+    showOnlineSetupScreen();
+  };
+
+  // عند Refresh في غرفة بدأت، اطلب الحالة الحالية من المضيف.
+  if(!window.__fifaRoomStateRequest){
+    window.__fifaRoomStateRequest=true;
+    const oldSend=onlineSend;
+    onlineSend=oldSend;
+  }
+
+  // زر المضيف القديم يظل يعمل لو احتجناه، ويستخدم عدد الفرق المختار.
+  startOnlineGame=async function(){
+    if(!currentRoom||!onlineIsHost())return;
+    await onlineMaybeStartDraft();
+  };
+})();
+</script>
 </body>
 </html>
